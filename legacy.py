@@ -42,22 +42,22 @@ def load_network_pkl(f, force_fp16=False):
     assert isinstance(data['augment_pipe'], (torch.nn.Module, type(None)))
 
     # Force FP16.
-    if force_fp16:
-        for key in ['G', 'D', 'G_ema']:
-            old = data[key]
-            kwargs = copy.deepcopy(old.init_kwargs)
-            if key.startswith('G'):
-                kwargs.synthesis_kwargs = dnnlib.EasyDict(kwargs.get('synthesis_kwargs', {}))
-                kwargs.synthesis_kwargs.num_fp16_res = 4
-                kwargs.synthesis_kwargs.conv_clamp = 256
-            if key.startswith('D'):
-                kwargs.num_fp16_res = 4
-                kwargs.conv_clamp = 256
-            if kwargs != old.init_kwargs:
-                new = type(old)(**kwargs).eval().requires_grad_(False)
-                misc.copy_params_and_buffers(old, new, require_all=True)
-                data[key] = new
-    return data
+
+    for key in ['G', 'D', 'G_ema']:
+        old = data[key]
+        kwargs = copy.deepcopy(old.init_kwargs)
+        if key.startswith('G'):
+            kwargs.synthesis_kwargs = dnnlib.EasyDict(kwargs.get('synthesis_kwargs', {}))
+            kwargs.synthesis_kwargs.num_fp16_res = 4
+            kwargs.synthesis_kwargs.conv_clamp = 256
+        if key.startswith('D'):
+            kwargs.num_fp16_res = 4
+            kwargs.conv_clamp = 256
+        if kwargs != old.init_kwargs:
+            new = type(old)(**kwargs).eval().requires_grad_(False)
+            misc.copy_params_and_buffers(old, new, require_all=True)
+            data[key] = new
+
 
 #----------------------------------------------------------------------------
 
@@ -87,6 +87,7 @@ def _collect_tf_params(tf_net):
 
 def _populate_module_params(module, *patterns):
     for name, tensor in misc.named_params_and_buffers(module):
+        print("==================" + name)
         found = False
         value = None
         for pattern, value_fn in zip(patterns[0::2], patterns[1::2]):
@@ -99,6 +100,8 @@ def _populate_module_params(module, *patterns):
         try:
             assert found
             if value is not None:
+                print(np.array(value).shape)
+                print(tensor.size())
                 tensor.copy_(torch.from_numpy(np.array(value)))
         except:
             print(name, list(tensor.shape))
@@ -120,9 +123,9 @@ def convert_tf_generator(tf_G):
 
     # Convert kwargs.
     kwargs = dnnlib.EasyDict(
-        z_dim                   = kwarg('latent_size',          512),
+        z_dim                   = kwarg('latent_size',          1024),
         c_dim                   = kwarg('label_size',           0),
-        w_dim                   = kwarg('dlatent_size',         512),
+        w_dim                   = kwarg('dlatent_size',         1024),
         img_resolution          = kwarg('resolution',           1024),
         img_channels            = kwarg('num_channels',         3),
         mapping_kwargs = dnnlib.EasyDict(
@@ -135,9 +138,9 @@ def convert_tf_generator(tf_G):
         ),
         synthesis_kwargs = dnnlib.EasyDict(
             channel_base        = kwarg('fmap_base',            16384) * 2,
-            channel_max         = kwarg('fmap_max',             512),
-            num_fp16_res        = kwarg('num_fp16_res',         0),
-            conv_clamp          = kwarg('conv_clamp',           None),
+            channel_max         = kwarg('fmap_max',             1024),
+            num_fp16_res        = kwarg('num_fp16_res',         4),
+            conv_clamp          = kwarg('conv_clamp',           256),
             architecture        = kwarg('architecture',         'skip'),
             resample_filter     = kwarg('resample_kernel',      [1,3,3,1]),
             use_noise           = kwarg('use_noise',            True),
@@ -150,9 +153,14 @@ def convert_tf_generator(tf_G):
     kwarg('truncation_cutoff')
     kwarg('style_mixing_prob')
     kwarg('structure')
+
+    print(tf_kwargs)
+    tf_kwargs.pop('resolution_w', None)
+    tf_kwargs.pop('resolution_h', None)
+
     unknown_kwargs = list(set(tf_kwargs.keys()) - known_kwargs)
     if len(unknown_kwargs) > 0:
-        raise ValueError('Unknown TensorFlow kwarg', unknown_kwargs[0])
+        raise ValueError('Unknown TensorFlow kwarg', unknown_kwargs)
 
     # Collect params.
     tf_params = _collect_tf_params(tf_G)
@@ -164,6 +172,8 @@ def convert_tf_generator(tf_G):
             kwargs.synthesis.kwargs.architecture = 'orig'
     #for name, value in tf_params.items(): print(f'{name:<50s}{list(value.shape)}')
 
+    # print(tf_params[f'synthesis/4x4/Const/const'].shape)
+    print(tf_params[f'synthesis/4x4/Conv/mod_weight'].shape)
     # Convert params.
     from training import networks
     G = networks.Generator(**kwargs).eval().requires_grad_(False)
@@ -222,7 +232,7 @@ def convert_tf_discriminator(tf_D):
         img_channels            = kwarg('num_channels',         3),
         architecture            = kwarg('architecture',         'resnet'),
         channel_base            = kwarg('fmap_base',            16384) * 2,
-        channel_max             = kwarg('fmap_max',             512),
+        channel_max             = kwarg('fmap_max',             1024),
         num_fp16_res            = kwarg('num_fp16_res',         0),
         conv_clamp              = kwarg('conv_clamp',           None),
         cmap_dim                = kwarg('mapping_fmaps',        None),
